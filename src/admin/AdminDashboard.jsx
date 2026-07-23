@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import { auth, db } from "../firebase";
-import { collection, addDoc, getDocs, deleteDoc, doc, getDoc, setDoc } from "firebase/firestore";
+import { collection, addDoc, getDocs, deleteDoc, doc, getDoc, setDoc, updateDoc } from "firebase/firestore";
 import { useNavigate } from "react-router-dom";
 import { uploadImage, uploadFile, uploadVideo } from "../utils/uploadImage";
 
@@ -22,6 +22,9 @@ function AdminDashboard() {
   const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [projects, setProjects] = useState([]);
+  const [editingProjectId, setEditingProjectId] = useState(null);
+  const [existingImageUrl, setExistingImageUrl] = useState("");
+  const [existingGallery, setExistingGallery] = useState([]);
 
   const [paragraph1, setParagraph1] = useState("");
   const [paragraph2, setParagraph2] = useState("");
@@ -95,22 +98,23 @@ function AdminDashboard() {
     e.preventDefault();
     setSubmitting(true);
     try {
-      let imageUrl = "";
+      let imageUrl = existingImageUrl;
       if (projectImage) {
         setUploading(true);
         imageUrl = await uploadImage(projectImage);
       }
 
-      let galleryUrls = [];
+      let galleryUrls = existingGallery;
       if (galleryImages.length > 0) {
         setUploading(true);
-        galleryUrls = await Promise.all(
+        const newGalleryUrls = await Promise.all(
           Array.from(galleryImages).map((file) => uploadImage(file))
         );
+        galleryUrls = [...existingGallery, ...newGalleryUrls];
       }
       setUploading(false);
 
-      await addDoc(collection(db, "projects"), {
+      const projectData = {
         title,
         description,
         fullDescription,
@@ -119,22 +123,51 @@ function AdminDashboard() {
         githubLink,
         imageUrl,
         gallery: galleryUrls,
-      });
-      setTitle("");
-      setDescription("");
-      setFullDescription("");
-      setTech("");
-      setLiveLink("");
-      setGithubLink("");
-      setProjectImage(null);
-      setGalleryImages([]);
+      };
+
+      if (editingProjectId) {
+        await updateDoc(doc(db, "projects", editingProjectId), projectData);
+      } else {
+        await addDoc(collection(db, "projects"), projectData);
+      }
+
+      resetProjectForm();
       fetchProjects();
     } catch (err) {
-      console.error("Error adding project:", err);
-      alert("Project add karne mein error aaya.");
+      console.error("Error saving project:", err);
+      alert("Project save karne mein error aaya.");
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const resetProjectForm = () => {
+    setTitle("");
+    setDescription("");
+    setFullDescription("");
+    setTech("");
+    setLiveLink("");
+    setGithubLink("");
+    setProjectImage(null);
+    setGalleryImages([]);
+    setExistingImageUrl("");
+    setExistingGallery([]);
+    setEditingProjectId(null);
+  };
+
+  const handleEditClick = (project) => {
+    setEditingProjectId(project.id);
+    setTitle(project.title || "");
+    setDescription(project.description || "");
+    setFullDescription(project.fullDescription || "");
+    setTech((project.tech || []).join(", "));
+    setLiveLink(project.liveLink || "");
+    setGithubLink(project.githubLink || "");
+    setExistingImageUrl(project.imageUrl || "");
+    setExistingGallery(project.gallery || []);
+    setProjectImage(null);
+    setGalleryImages([]);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   const handleDeleteProject = async (id) => {
@@ -473,8 +506,10 @@ function AdminDashboard() {
         {activeTab === "projects" && (
           <div className="flex flex-col lg:flex-row gap-6 items-start">
             <div className="bg-gray-900 rounded-2xl p-6 border border-gray-800 flex-1">
-              <h2 className="text-lg font-bold mb-1">Add New Project</h2>
-              <p className="text-gray-500 text-sm mb-5">Naya project add karo, turant public site pe dikhega.</p>
+              <h2 className="text-lg font-bold mb-1">{editingProjectId ? "Edit Project" : "Add New Project"}</h2>
+                <p className="text-gray-500 text-sm mb-5">
+                  {editingProjectId ? "Project update karo, changes turant save ho jayenge." : "Naya project add karo, turant public site pe dikhega."}
+                </p>
               <form onSubmit={handleAddProject} className="flex flex-col gap-3">
                 <input placeholder="Project Title" value={title} onChange={(e) => setTitle(e.target.value)} required className={inputClass} />
                 <textarea placeholder="Short Description (card pe dikhega)" value={description} onChange={(e) => setDescription(e.target.value)} required rows={2} className={inputClass} />
@@ -513,6 +548,18 @@ function AdminDashboard() {
                   {projectImage && (
                     <p className="text-xs text-purple-400 mt-1">Selected: {projectImage.name}</p>
                   )}
+                  {editingProjectId && existingImageUrl && !projectImage && (
+                  <div className="mt-2 relative inline-block">
+                    <img src={existingImageUrl} alt="Current" className="w-20 h-20 rounded-lg object-cover border border-gray-700" />
+                    <button
+                      type="button"
+                      onClick={() => setExistingImageUrl("")}
+                      className="absolute -top-2 -right-2 bg-red-600 hover:bg-red-700 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs"
+                    >
+                    ×
+                    </button>
+                  </div>
+                  )}
                 </div>
 
                 <div>
@@ -546,11 +593,34 @@ function AdminDashboard() {
                       ))}
                     </div>
                   )}
+                  {editingProjectId && existingGallery.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {existingGallery.map((url, idx) => (
+                        <div key={idx} className="relative">
+                          <img src={url} alt={`Gallery ${idx}`} className="w-16 h-16 rounded-lg object-cover border border-gray-700" />
+                          <button
+                            type="button"
+                            onClick={() => setExistingGallery((prev) => prev.filter((_, i) => i !== idx))}
+                            className="absolute -top-2 -right-2 bg-red-600 hover:bg-red-700 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
-                <button type="submit" disabled={submitting} className="p-3 rounded-lg bg-purple-600 hover:bg-purple-700 font-bold transition disabled:opacity-50">
-                  {uploading ? "Uploading Images..." : submitting ? "Adding..." : "Add Project"}
+               <div className="flex gap-2">
+                <button type="submit" disabled={submitting} className="flex-1 p-3 rounded-lg bg-purple-600 hover:bg-purple-700 font-bold transition disabled:opacity-50">
+                  {uploading ? "Uploading Images..." : submitting ? "Saving..." : editingProjectId ? "Update Project" : "Add Project"}
                 </button>
+                {editingProjectId && (
+                  <button type="button" onClick={resetProjectForm} className="px-4 rounded-lg bg-gray-700 hover:bg-gray-600 font-bold transition">
+                    Cancel
+                  </button>
+                )}
+              </div>
               </form>
             </div>
 
@@ -568,6 +638,9 @@ function AdminDashboard() {
                         )}
                         <span className="font-medium">{project.title}</span>
                       </div>
+                      <button onClick={() => handleEditClick(project)} className="bg-purple-600/20 hover:bg-purple-600 text-purple-400 hover:text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition mr-2">
+                        Edit
+                      </button>
                       <button onClick={() => handleDeleteProject(project.id)} className="bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition">
                         Delete
                       </button>
